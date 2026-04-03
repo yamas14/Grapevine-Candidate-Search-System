@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -16,6 +16,7 @@ class RankedCandidate:
     base_distance: float
     base_score: float
     final_score: float
+    breakdown: Dict[str, Any]
 
 
 class HybridRanker:
@@ -57,13 +58,14 @@ class HybridRanker:
             if idx < 0 or idx >= len(self.df):
                 continue
             base_score = self._distance_to_score(float(dist))
-            final_score = self._apply_multipliers(base_score, idx, intent)
+            final_score, breakdown = self._apply_multipliers(base_score, idx, intent)
             records.append(
                 RankedCandidate(
                     idx=int(idx),
                     base_distance=float(dist),
                     base_score=float(base_score),
                     final_score=float(final_score),
+                    breakdown=breakdown,
                 )
             )
 
@@ -75,12 +77,27 @@ class HybridRanker:
         out["base_distance"] = [r.base_distance for r in ranked]
         out["base_score"] = [r.base_score for r in ranked]
         out["final_score"] = [r.final_score for r in ranked]
+        out["score_multiplier"] = [float(r.breakdown.get("score_multiplier", 1.0) or 1.0) for r in ranked]
+        out["boost_yoe"] = [bool(r.breakdown.get("boost_yoe", False)) for r in ranked]
+        out["boost_location"] = [bool(r.breakdown.get("boost_location", False)) for r in ranked]
+        out["boost_stability"] = [bool(r.breakdown.get("boost_stability", False)) for r in ranked]
+        out["penalty_job_hopper"] = [bool(r.breakdown.get("penalty_job_hopper", False)) for r in ranked]
         out["rank"] = list(range(1, len(out) + 1))
 
         return out.sort_values("final_score", ascending=False).reset_index(drop=True)
 
-    def _apply_multipliers(self, score: float, idx: int, intent: SearchIntent) -> float:
+    def _apply_multipliers(self, score: float, idx: int, intent: SearchIntent) -> tuple[float, Dict[str, Any]]:
         s = float(score)
+
+        breakdown: Dict[str, Any] = {
+            "intent": intent.to_dict(),
+            "base_score": float(score),
+            "score_multiplier": 1.0,
+            "boost_yoe": False,
+            "boost_location": False,
+            "boost_stability": False,
+            "penalty_job_hopper": False,
+        }
 
         row = self.df.iloc[idx]
 
@@ -93,6 +110,8 @@ class HybridRanker:
                 cand_yoe = 0.0
             if cand_yoe >= float(min_yoe):
                 s *= 1.4
+                breakdown["boost_yoe"] = True
+                breakdown["score_multiplier"] = float(breakdown["score_multiplier"]) * 1.4
 
         # Location match (substring in combined text)
         loc = (intent.location or "").strip()
@@ -100,13 +119,19 @@ class HybridRanker:
             text = str(row.get(self.location_text_column, "") or "")
             if loc.lower() in text.lower():
                 s *= 1.3
+                breakdown["boost_location"] = True
+                breakdown["score_multiplier"] = float(breakdown["score_multiplier"]) * 1.3
 
         # Stability match / penalty
         if intent.stability_required:
             is_job_hopper = bool(row.get(self.job_hopper_column, False))
             if not is_job_hopper:
                 s *= 1.5
+                breakdown["boost_stability"] = True
+                breakdown["score_multiplier"] = float(breakdown["score_multiplier"]) * 1.5
             else:
                 s *= 0.5
+                breakdown["penalty_job_hopper"] = True
+                breakdown["score_multiplier"] = float(breakdown["score_multiplier"]) * 0.5
 
-        return s
+        return s, breakdown
