@@ -96,7 +96,8 @@ def main() -> int:
     ranker = HybridRanker(indexer=indexer, candidates_df=df, intent_extractor=intent_extractor)
     explainer = RelevanceExplainer()
 
-    out_path = Path("analysis_results.md")
+    out_path = Path("docs") / "analysis_results.md"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines = ["# Candidate Search Evaluation Results", ""]
 
