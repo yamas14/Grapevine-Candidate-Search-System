@@ -30,6 +30,7 @@ EVAL_QUERIES = [
     "Fintech engineer with payments domain, 4+ years",
     "Startup engineer (early-stage), 4+ years",
     "Senior Python dev in Bangalore, 4+ years, not a job hopper",
+    "ML engineer who's done production deployment, not just notebooks"
 ]
 
 

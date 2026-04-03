@@ -68,6 +68,225 @@ def _coalesce_str(*values: Any) -> str:
     return ""
 
 
+_NAME_STOPWORDS = {
+    "summary",
+    "experience",
+    "skills",
+    "education",
+    "projects",
+    "certifications",
+    "objective",
+    "profile",
+    "contact",
+    "phone",
+    "email",
+    "linkedin",
+    "github",
+    "software",
+    "engineer",
+    "developer",
+    "development",
+    "designer",
+    "manager",
+    "analyst",
+    "architect",
+    "consultant",
+    "specialist",
+    "intern",
+    "fellow",
+    "lead",
+    "senior",
+    "junior",
+    "full stack",
+    "full-stack",
+    "years of experience",
+    "academic",
+    "academic work",
+    "professional summary",
+    "work experience",
+}
+
+_NAME_SECTION_HEADERS = {
+    "summary",
+    "professional summary",
+    "experience",
+    "work experience",
+    "employment",
+    "education",
+    "projects",
+    "skills",
+    "certifications",
+    "objective",
+    "profile",
+}
+
+_NAME_DEGREE_PHRASES = {
+    "master",
+    "masters",
+    "bachelor",
+    "bachelors",
+    "btech",
+    "mtech",
+    "mba",
+    "b.sc",
+    "m.sc",
+    "phd",
+    "doctorate",
+    "degree",
+    "diploma",
+}
+
+_NAME_BAD_TOKENS = {
+    "team",
+    "security",
+    "technologies",
+    "technology",
+    "solutions",
+    "services",
+    "systems",
+    "institute",
+    "university",
+    "college",
+    "school",
+    "department",
+    "company",
+    "pvt",
+    "ltd",
+    "limited",
+    "private",
+    "inc",
+    "llc",
+    "group",
+}
+
+
+def _has_name_stopword(candidate_lower: str) -> bool:
+    # Match stopwords as whole words/phrases to avoid cases like "Network" matching "work".
+    for sw in _NAME_STOPWORDS:
+        if re.search(rf"\b{re.escape(sw)}\b", candidate_lower):
+            return True
+    return False
+
+
+def _is_name_like(candidate: str, *, original_line: str) -> bool:
+    if not candidate:
+        return False
+    if len(candidate) > 40:
+        return False
+    if "[" in candidate and "]" in candidate:
+        return False
+    if "@" in original_line:
+        return False
+    if re.search(r"\d", original_line):
+        return False
+
+    low = candidate.lower()
+    if _has_name_stopword(low):
+        return False
+    if any(re.search(rf"\b{re.escape(p)}\b", low) for p in _NAME_DEGREE_PHRASES):
+        return False
+
+    if not re.fullmatch(r"[A-Za-z][A-Za-z .']{1,60}", candidate):
+        return False
+
+    parts = [p for p in candidate.split(" ") if p]
+    if len(parts) < 2 or len(parts) > 4:
+        return False
+
+    # Reject common non-person tokens (org/team/edu keywords).
+    if any(p.lower().strip(".") in _NAME_BAD_TOKENS for p in parts):
+        return False
+
+    if any(len(p) > 20 for p in parts):
+        return False
+
+    caps = sum(1 for p in parts if p[:1].isupper())
+    if caps < 2:
+        return False
+
+    return True
+
+
+def extract_name_from_resume_text(text: Any) -> str:
+    if _is_nullish(text):
+        return ""
+
+    raw = str(text)
+    # Normalize common non-breaking spaces and other odd spacing artifacts
+    raw = raw.replace("\u00a0", " ")
+    raw = raw.replace("\r\n", "\n")
+    lines = [ln.strip() for ln in raw.split("\n")]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return ""
+
+    # Search within the first few lines for a name-like pattern.
+    # Stop early if we hit a section header (likely already past the header/name block).
+    for ln in lines[:25]:
+        header_norm = re.sub(r"\s+", " ", ln.replace("\u00a0", " ").strip()).lower().strip(":-")
+        if header_norm in _NAME_SECTION_HEADERS:
+            break
+        # Remove common separators / trailing IDs
+        candidate = re.split(r"\||•|·", ln, maxsplit=1)[0]
+        candidate = candidate.replace("\u00a0", " ")
+        candidate = re.sub(r"\s+", " ", candidate).strip()
+        candidate = re.sub(r"^[^A-Za-z]+", "", candidate)
+        candidate = re.sub(r"[^A-Za-z .']+$", "", candidate)
+        candidate = "".join(ch for ch in candidate if (ch.isalpha() or ch in " .'")).strip()
+        candidate = re.sub(r"\s+", " ", candidate).strip()
+
+        if not candidate:
+            continue
+
+        # Skip lines that are likely contact info or IDs.
+        if "@" in ln:
+            continue
+        if re.search(r"\d", ln):
+            continue
+        if len(candidate) > 40:
+            continue
+
+        # Support ALL-CAPS names like "JOHN DOE"
+        if candidate.isupper():
+            candidate = " ".join([p.capitalize() for p in candidate.split(" ") if p])
+
+        if _is_name_like(candidate, original_line=ln):
+            return candidate.strip()
+
+    # Second pass: name sometimes appears just above contact info.
+    contact_markers = ("@", "phone", "email", "linkedin", "github")
+    max_lines = min(len(lines), 40)
+    for i in range(max_lines):
+        ln = lines[i]
+        ln_low = ln.lower()
+        if not any(m in ln_low for m in contact_markers):
+            continue
+
+        for back in range(1, 4):
+            j = i - back
+            if j < 0:
+                break
+            prev = lines[j]
+            prev_header = re.sub(r"\s+", " ", prev.replace("\u00a0", " ").strip()).lower().strip(":-")
+            if prev_header in _NAME_SECTION_HEADERS:
+                break
+
+            cand = re.split(r"\||•|·", prev, maxsplit=1)[0]
+            cand = cand.replace("\u00a0", " ")
+            cand = re.sub(r"\s+", " ", cand).strip()
+            cand = re.sub(r"^[^A-Za-z]+", "", cand)
+            cand = re.sub(r"[^A-Za-z .']+$", "", cand)
+            cand = "".join(ch for ch in cand if (ch.isalpha() or ch in " .'")).strip()
+            cand = re.sub(r"\s+", " ", cand).strip()
+            if cand.isupper():
+                cand = " ".join([p.capitalize() for p in cand.split(" ") if p])
+
+            if _is_name_like(cand, original_line=prev):
+                return cand.strip()
+
+    return ""
+
+
 def _parse_month_token(token: str) -> Optional[int]:
     token = token.strip().lower().strip(".,")
     if token in MONTHS:
@@ -317,6 +536,21 @@ def load_candidates_excel(
 
     # Normalize column names
     df = df.rename(columns={c: _normalize_column_name(c) for c in df.columns})
+
+    # Best-effort name extraction
+    structured_name_col = None
+    for candidate in ["name", "candidate name", "full name"]:
+        if candidate in df.columns:
+            structured_name_col = candidate
+            break
+
+    if structured_name_col is None:
+        if "resume text" in df.columns:
+            df["name"] = df["resume text"].apply(extract_name_from_resume_text).astype(str).str.strip()
+        else:
+            df["name"] = ""
+    else:
+        df["name"] = df[structured_name_col].fillna("").astype(str).str.strip()
 
     # Compute experience stats
     work_hist_col = None
