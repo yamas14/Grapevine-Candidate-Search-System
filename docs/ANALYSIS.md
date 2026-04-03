@@ -4,9 +4,10 @@
 
 I built **job search (find candidates)**: given a hiring-manager style natural-language query, return the most relevant **candidate profiles**.
 
-Why this direction:
-- The candidate corpus is smaller (~2k) so iteration is fast and quality tuning is easier within 24 hours.
-- The same architecture can be mirrored for job search later (swap the corpus + loader + index).
+Why this direction (and why I did not index jobs in this submission):
+- With a 24-hour constraint, I prioritized a complete, demo-ready system with transparent ranking and explanations on the smaller corpus (~2k candidates), which makes iteration and debugging much faster.
+- The jobs dataset is much larger (~15k+) and would require additional work to normalize fields and tune ranking for salary/contract filters; doing both well would reduce quality.
+- The architecture is corpus-agnostic: adding job search is straightforward by swapping the loader to read job rows, building a `combined_text` for jobs, and creating a second FAISS index + reranker.
 
 ## Approach (what / how / why)
 
