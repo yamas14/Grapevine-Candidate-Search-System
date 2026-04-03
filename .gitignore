@@ -11,6 +11,5 @@ __pycache__/
 
 # Generated artifacts
 artifacts/
-analysis_results.md
 *.npy
 *.index
